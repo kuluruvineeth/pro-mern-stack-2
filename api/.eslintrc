@@ -1,0 +1,9 @@
+{
+  "extends":"airbnd-base",
+  "env":{
+    "node":"true"
+  },
+  "rules":{
+    "no-console":"off"
+  }
+}

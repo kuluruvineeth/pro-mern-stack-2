@@ -1,34 +1,16 @@
-
 const fs = require('fs');
+require('dotenv').config();
 const express = require('express');
 const { ApolloServer, UserInputError } = require('apollo-server-express');
 const { GraphQLScalarType } = require('graphql');
 const { Kind } = require('graphql/language');
 const { MongoClient } = require('mongodb');
 
-//const url = 'mongodb://localhost/issuetracker';
-
-const url = 'mondodb+srv://kuluruvineeth:vineeth8623@cluster0-4wy3n.mongodb.net/issuetracker?retryWrites=true';
-
-// Atlas URL  - replace UUU with user, PPP with password, XXX with hostname
-// const url = 'mongodb+srv://UUU:PPP@cluster0-XXX.mongodb.net/issuetracker?retryWrites=true';
-
-// mLab URL - replace UUU with user, PPP with password, XXX with hostname
-// const url = 'mongodb://UUU:PPP@XXX.mlab.com:33533/issuetracker';
+const url = process.env.DB_URL ||  'mondodb+srv://kuluruvineeth:vineeth8623@cluster0-4wy3n.mongodb.net/issuetracker?retryWrites=true';
 
 let db;
 
-let aboutMessage = "Issue Tracker API v1.0";
-
-async function getNextSequence(name){
-  const result = await db.collection('counters').findOneAndUpdate(
-    {_id:name},
-    {$inc:{current:1}},
-    {returnOriginal:false},
-  );
-  return result.value.current;
-}
-
+let aboutMessage = 'Issue Tracker API v1.0';
 
 const GraphQLDate = new GraphQLScalarType({
   name: 'GraphQLDate',
@@ -38,35 +20,34 @@ const GraphQLDate = new GraphQLScalarType({
   },
   parseValue(value) {
     const dateValue = new Date(value);
-    return isNaN(dateValue) ? undefined : dateValue;
+    return Number.isNaN(dateValue.getTime()) ? undefined : dateValue;
   },
   parseLiteral(ast) {
-    if (ast.kind == Kind.STRING) {
+    if (ast.kind === Kind.STRING) {
       const value = new Date(ast.value);
-      return isNaN(value) ? undefined : value;
+      return Number.isNaN(value.getTime()) ? undefined : value;
     }
+    return undefined;
   },
 });
 
-const resolvers = {
-  Query: {
-    about: () => aboutMessage,
-    issueList,
-  },
-  Mutation: {
-    setAboutMessage,
-    issueAdd,
-  },
-  GraphQLDate,
-};
-
 function setAboutMessage(_, { message }) {
-  return aboutMessage = message;
+  aboutMessage = message;
+  return aboutMessage;
 }
 
 async function issueList() {
   const issues = await db.collection('issues').find({}).toArray();
   return issues;
+}
+
+async function getNextSequence(name) {
+  const result = await db.collection('counters').findOneAndUpdate(
+    { _id: name },
+    { $inc: { current: 1 } },
+    { returnOriginal: false },
+  );
+  return result.value.current;
 }
 
 function issueValidate(issue) {
@@ -84,10 +65,13 @@ function issueValidate(issue) {
 
 async function issueAdd(_, { issue }) {
   issueValidate(issue);
-  issue.created = new Date();
-  issue.id = await getNextSequence('issues');
-  const result = await db.collection('issues').insertOne(issue);
-  const savedIssue = await db.collection('issues').findOne({_id:result.insertedId});
+  const newIssue = Object.assign({}, issue);
+  newIssue.created = new Date();
+  newIssue.id = await getNextSequence('issues');
+
+  const result = await db.collection('issues').insertOne(newIssue);
+  const savedIssue = await db.collection('issues')
+    .findOne({ _id: result.insertedId });
   return savedIssue;
 }
 
@@ -98,10 +82,22 @@ async function connectToDb() {
   db = client.db();
 }
 
+const resolvers = {
+  Query: {
+    about: () => aboutMessage,
+    issueList,
+  },
+  Mutation: {
+    setAboutMessage,
+    issueAdd,
+  },
+  GraphQLDate,
+};
+
 const server = new ApolloServer({
   typeDefs: fs.readFileSync('schema.graphql', 'utf-8'),
   resolvers,
-  formatError: error => {
+  formatError: (error) => {
     console.log(error);
     return error;
   },
@@ -109,18 +105,22 @@ const server = new ApolloServer({
 
 const app = express();
 
-app.use(express.static('public'));
+const enableCors = (process.env.ENABLE_CORS || 'true') === 'true';
+console.log('CORS setting:', enableCors);
+server.applyMiddleware({ app, path: '/graphql', cors: enableCors });
 
-server.applyMiddleware({ app, path: '/graphql' });
+const port = process.env.API_SERVER_PORT || 3000;
+
+(async function start() {
+  try {
+    await connectToDb();
+    app.listen(port, () => {
+      console.log(`API server started on port ${port}`);
+    });
+  } catch (err) {
+    console.log('ERROR:', err);
+  }
+}());
 
 
- (async function () {
-   try {
-     await connectToDb();
-     app.listen(3000, function () {
-       console.log('API server started on port 3000');
-     });
-   } catch (err) {
-     console.log('ERROR:', err);
-   }
- })();
+
